@@ -167,6 +167,90 @@ async function fetchCatalog(query: string, catalogIds = '', retry = true): Promi
   }).sort((a: any, b: any) => Number(b.id) - Number(a.id));
 }
 
+const NEGATIVE_KEYWORDS = [
+  'carte', 'cards', 'booster', 'carddass', 't-shirt', 'tshirt', 'pull', 'sweat',
+  'mug', 'figurine', 'figma', 'nendoroid', 'poster', 'badge', 'porte-clé', 'keychain',
+  'drapeau', 'peluche', 'plaid', 'casquette', 'chaussettes', 'sac', 'cosplay',
+  'jeu', 'console', 'switch', 'ps4', 'ps5', 'xbox', 'tome unique vide', 'classeur',
+  'box vide', 'boite vide', 'funko', 'pop', 'jeux', 'deck', 'collier', 'bracelet'
+];
+
+async function verifyItemIsBook(item: { id: string; title: string; imageUrl: string }): Promise<boolean> {
+  // 1. Check title against local negative keywords (instant filter, saves API calls)
+  const normalizedTitle = item.title.toLowerCase();
+  const matchesKeyword = NEGATIVE_KEYWORDS.find(kw => normalizedTitle.includes(kw));
+  if (matchesKeyword) {
+    console.log(`[Server Filter] Keyword exclusion: "${item.title}" contains "${matchesKeyword}"`);
+    return false;
+  }
+
+  // 2. Check persistent OpenAI Cache (survives app restarts)
+  const cached = persistentCache.getOpenAi(item.id);
+  if (cached !== null) {
+    return cached.is_book;
+  }
+
+  // If no image, assume it's a book by default to avoid false exclusions
+  if (!item.imageUrl) {
+    return true;
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return true; // Skip AI check if key is not configured
+  }
+
+  try {
+    console.log(`[Server AI Classifier] Running vision check for item ${item.id} ("${item.title}")`);
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `Analyze this Vinted listing image and its title: "${item.title}". Determine if the main product shown in the image is a book (manga volume, novel, comic book, or light novel). Respond strictly in JSON format with two keys: "is_book" (boolean) and "reason" (string, short explanation in French). Do not include any markdown formatting like \`\`\`json.`
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: item.imageUrl
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 120,
+        response_format: { type: "json_object" }
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.choices && data.choices[0]) {
+        const parsed = JSON.parse(data.choices[0].message.content);
+        persistentCache.setOpenAi(item.id, parsed);
+        console.log(`[Server AI Classifier Result] Item ${item.id}: is_book=${parsed.is_book} - ${parsed.reason}`);
+        return parsed.is_book;
+      }
+    } else {
+      const errTxt = await res.text();
+      console.error(`[Server AI Classifier Error] Vinted item ${item.id} classification failed:`, errTxt);
+    }
+  } catch (err) {
+    console.error(`[Server AI Classifier Exception] Exception for item ${item.id}:`, err);
+  }
+
+  return true; // Fallback to true if OpenAI call fails
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -181,7 +265,7 @@ export async function GET(request: Request) {
 
     const cacheKey = `${query.toLowerCase().trim()}_cat_${catalogIds}`;
     
-    // Check persistent search cache (survives restarts, TTL 10s max as requested)
+    // Check persistent search cache
     const cachedData = persistentCache.getSearch(cacheKey, 10000);
     if (cachedData) {
       cacheHits++;
@@ -201,14 +285,23 @@ export async function GET(request: Request) {
     cacheMisses++;
     
     // Queue Vinted request
-    const items = await queueVintedRequest(() => fetchCatalog(query, catalogIds));
+    const allItems = await queueVintedRequest(() => fetchCatalog(query, catalogIds));
     
+    // Limit to top 25 items for parallel server-side verification to avoid high latency or rate limits
+    const itemsToVerify = allItems.slice(0, 25);
+    const verificationResults = await Promise.all(
+      itemsToVerify.map((item: any) => verifyItemIsBook(item))
+    );
+    
+    // Filter and return only items verified as books/mangas
+    const verifiedItems = itemsToVerify.filter((_: any, index: number) => verificationResults[index]);
+
     // Save to persistent cache
-    persistentCache.setSearch(cacheKey, items);
+    persistentCache.setSearch(cacheKey, verifiedItems);
     persistentCache.clearExpired(10000);
 
     return NextResponse.json({ 
-      items, 
+      items: verifiedItems, 
       cached: false,
       serverIp: serverIpCached || 'Verification...',
       stats: {

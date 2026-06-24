@@ -64,33 +64,6 @@ export default function CoppingPage() {
     };
   }, [isLiveActive, searchQuery, filterMangaOnly]);
 
-  // AI Verification Queue Loop
-  useEffect(() => {
-    const unverified = listings.filter(l => !l.aiVerified || l.aiVerified === 'pending');
-    if (unverified.length === 0) return;
-
-    unverified.forEach(async (item) => {
-      // Mark as checking to avoid duplicate requests
-      setListings(prev => prev.map(p => p.id === item.id ? { ...p, aiVerified: 'checking' } : p));
-      
-      try {
-        const res = await fetch(`/api/vinted/verify?id=${item.id}&title=${encodeURIComponent(item.title)}&imageUrl=${encodeURIComponent(item.imageUrl)}`);
-        if (res.ok) {
-          const data = await res.json();
-          setListings(prev => prev.map(p => p.id === item.id ? { 
-            ...p, 
-            aiVerified: data.is_book ? 'book' : 'non_book',
-            aiReason: data.reason
-          } : p));
-        } else {
-          setListings(prev => prev.map(p => p.id === item.id ? { ...p, aiVerified: 'book' } : p));
-        }
-      } catch (err) {
-        setListings(prev => prev.map(p => p.id === item.id ? { ...p, aiVerified: 'book' } : p));
-      }
-    });
-  }, [listings]);
-
   const fetchVintedListings = async (query: string, isSilent = false) => {
     if (!query.trim()) return;
     if (isFetchingRef.current) return; // Prevent simultaneous overlapping calls
@@ -124,8 +97,7 @@ export default function CoppingPage() {
             return {
               ...item,
               receivedAt: existing ? existing.receivedAt : now,
-              aiVerified: existing ? existing.aiVerified : 'pending',
-              aiReason: existing ? existing.aiReason : undefined
+              aiVerified: 'book'
             };
           });
 
