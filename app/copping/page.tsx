@@ -14,6 +14,8 @@ interface VintedListing {
   condition: string;
   description: string;
   receivedAt: number;
+  aiVerified?: 'pending' | 'checking' | 'book' | 'non_book';
+  aiReason?: string;
 }
 
 export default function CoppingPage() {
@@ -27,6 +29,7 @@ export default function CoppingPage() {
   // Basic Filters
   const [filterMangaOnly, setFilterMangaOnly] = useState(true); 
   const [filterStrictTime, setFilterStrictTime] = useState(false);
+  const [filterBooksOnly, setFilterBooksOnly] = useState(true); // Filter out cards, clothes, merchandise
   const [maxPrice, setMaxPrice] = useState<string>('');
 
   const [serverIp, setServerIp] = useState('Vérification...');
@@ -61,6 +64,33 @@ export default function CoppingPage() {
     };
   }, [isLiveActive, searchQuery, filterMangaOnly]);
 
+  // AI Verification Queue Loop
+  useEffect(() => {
+    const unverified = listings.filter(l => !l.aiVerified || l.aiVerified === 'pending');
+    if (unverified.length === 0) return;
+
+    unverified.forEach(async (item) => {
+      // Mark as checking to avoid duplicate requests
+      setListings(prev => prev.map(p => p.id === item.id ? { ...p, aiVerified: 'checking' } : p));
+      
+      try {
+        const res = await fetch(`/api/vinted/verify?id=${item.id}&title=${encodeURIComponent(item.title)}&imageUrl=${encodeURIComponent(item.imageUrl)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setListings(prev => prev.map(p => p.id === item.id ? { 
+            ...p, 
+            aiVerified: data.is_book ? 'book' : 'non_book',
+            aiReason: data.reason
+          } : p));
+        } else {
+          setListings(prev => prev.map(p => p.id === item.id ? { ...p, aiVerified: 'book' } : p));
+        }
+      } catch (err) {
+        setListings(prev => prev.map(p => p.id === item.id ? { ...p, aiVerified: 'book' } : p));
+      }
+    });
+  }, [listings]);
+
   const fetchVintedListings = async (query: string, isSilent = false) => {
     if (!query.trim()) return;
     if (isFetchingRef.current) return; // Prevent simultaneous overlapping calls
@@ -93,7 +123,9 @@ export default function CoppingPage() {
             const existing = prev.find(p => p.id === item.id);
             return {
               ...item,
-              receivedAt: existing ? existing.receivedAt : now
+              receivedAt: existing ? existing.receivedAt : now,
+              aiVerified: existing ? existing.aiVerified : 'pending',
+              aiReason: existing ? existing.aiReason : undefined
             };
           });
 
@@ -130,6 +162,9 @@ export default function CoppingPage() {
       }
       
       if (maxPrice && lst.price > parseFloat(maxPrice)) return false;
+      
+      // Filter out non-books using AI / local checks
+      if (filterBooksOnly && lst.aiVerified === 'non_book') return false;
       
       return true;
     });
@@ -244,6 +279,10 @@ export default function CoppingPage() {
             <input type="checkbox" checked={filterStrictTime} onChange={(e) => setFilterStrictTime(e.target.checked)} style={checkboxStyle} />
             <span style={{ color: '#ff55aa', fontWeight: 700 }}>☑️ Annonces récentes uniquement (&lt;90s)</span>
           </label>
+          <label style={checkboxLabelStyle}>
+            <input type="checkbox" checked={filterBooksOnly} onChange={(e) => setFilterBooksOnly(e.target.checked)} style={checkboxStyle} />
+            <span style={{ color: '#00e5ff', fontWeight: 700 }}>🤖 Filtre IA Anti-Merch (Masquer cartes, t-shirts, etc.)</span>
+          </label>
 
           <div style={inputFilterWrapperStyle}>
             <span style={inputFilterLabelStyle}>Prix Max (€)</span>
@@ -274,7 +313,24 @@ export default function CoppingPage() {
             <div key={lst.id} className="glass-panel" style={listingCardStyle}>
               {/* Header: Title and Published Info */}
               <div style={listingCardHeaderStyle}>
-                <span style={sourceLabelStyle}>Vinted</span>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <span style={sourceLabelStyle}>Vinted</span>
+                  {lst.aiVerified === 'checking' && (
+                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--accent-gold)', backgroundColor: 'rgba(255, 170, 0, 0.08)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
+                      ⏳ Analyse IA...
+                    </span>
+                  )}
+                  {lst.aiVerified === 'book' && (
+                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.08)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }} title={lst.aiReason}>
+                      ✓ Livre/Manga
+                    </span>
+                  )}
+                  {lst.aiVerified === 'non_book' && (
+                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.08)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }} title={lst.aiReason}>
+                      ❌ Non-Livre
+                    </span>
+                  )}
+                </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <span style={ageSec <= 15 ? liveBadgeStyle : timeLabelStyle}>
                     {ageSec <= 15 ? '⚡ NOUVELLE' : `Reçue il y a ${ageSec}s`}
