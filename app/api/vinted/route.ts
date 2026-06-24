@@ -39,54 +39,9 @@ async function fetchServerIp() {
   }
 }
 
-// Handshake to fetch Vinted cookies
+// Handshake to fetch Vinted cookies (unused now, kept for backward compatibility/simplicity)
 async function fetchTokens() {
-  try {
-    console.log("[Vinted API] Handshake cookies negotiation...");
-    const homeRes = await fetch("https://www.vinted.fr", {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "fr-FR,fr;q=0.9"
-      },
-      next: { revalidate: 0 }
-    });
-
-    if (homeRes.status === 403) {
-      total403Errors++;
-      throw new Error("Vinted blocked handshake with 403 Forbidden");
-    }
-
-    const setCookieHeaders = homeRes.headers.getSetCookie ? homeRes.headers.getSetCookie() : [];
-    let accessToken = '';
-    let cleanCookies: Record<string, string> = {};
-    
-    for (const header of setCookieHeaders) {
-      if (header) {
-        const parts = header.split(';');
-        const pair = parts[0].split('=');
-        if (pair.length >= 2) {
-          const key = pair[0].trim();
-          const val = pair.slice(1).join('=').trim();
-          if (val) {
-            cleanCookies[key] = val;
-            if (key === 'access_token_web') {
-              accessToken = val;
-            }
-          }
-        }
-      }
-    }
-    
-    const cookieString = Object.entries(cleanCookies).map(([k, v]) => `${k}=${v}`).join('; ');
-    if (cookieString) {
-      cachedCookie = cookieString;
-      cachedToken = accessToken;
-      tokenFetchedAt = Date.now();
-    }
-  } catch (err) {
-    console.error("[Vinted API] Handshake failed:", err);
-  }
+  console.log("[Vinted API] Skipping handshake as we use HTML scraping.");
 }
 
 // Sequential queue wrapper for Vinted queries
@@ -97,51 +52,87 @@ function queueVintedRequest(fn: () => Promise<any>): Promise<any> {
 }
 
 async function fetchCatalog(query: string, catalogIds = '', retry = true): Promise<any[]> {
-  if (!cachedCookie || (Date.now() - tokenFetchedAt > 10 * 60 * 1000)) {
-    await fetchTokens();
-  }
-
   // Anti-Blocking jitter
-  const jitter = Math.floor(Math.random() * 1000) + 500;
+  const jitter = Math.floor(Math.random() * 500) + 200;
   await delay(jitter);
 
   totalVintedRequests++;
-  let url = `https://www.vinted.fr/api/v2/catalog/items?search_text=${encodeURIComponent(query)}&per_page=20&order=newest_first`;
+
+  // Build target Vinted web url
+  let url = `https://www.vinted.fr/vetements?search_text=${encodeURIComponent(query)}`;
   if (catalogIds) {
-    url += `&catalog_ids=${catalogIds}`;
+    // Correct query parameter for public catalog search filter
+    url += `&catalog_id=${catalogIds}`;
   }
-  
+  url += `&order=newest_first`;
+
   const headers: Record<string, string> = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "fr-FR,fr;q=0.9",
-    "Cookie": cachedCookie
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "fr-FR,fr;q=0.9"
   };
-
-  if (cachedToken) {
-    headers["Authorization"] = `Bearer ${cachedToken}`;
-  }
 
   const res = await fetch(url, { headers, next: { revalidate: 0 } });
   
   if (res.status === 403) {
     total403Errors++;
-    throw new Error("Vinted search returned 403 Forbidden");
-  }
-
-  if (res.status === 401 && retry) {
-    cachedCookie = '';
-    cachedToken = '';
-    return fetchCatalog(query, catalogIds, false);
+    throw new Error("Vinted a retourné un code 403. Essayez de relancer ou d'attendre quelques secondes.");
   }
 
   if (!res.ok) {
-    throw new Error(`Vinted search failed: ${res.status}`);
+    throw new Error(`Erreur lors du scraping Vinted (Status: ${res.status})`);
   }
 
-  const data = await res.json();
-  const items = data?.items || [];
+  const html = await res.text();
+  const index = html.indexOf('\\"items\\":[');
   
+  if (index === -1) {
+    if (html.includes('\\"items\\":[]')) {
+      return [];
+    }
+    throw new Error("Impossible de trouver le payload des annonces dans la page Vinted.");
+  }
+
+  const startIndex = index + 10;
+  let bracketCount = 0;
+  let endIndex = -1;
+
+  for (let i = startIndex; i < html.length; i++) {
+    const char = html[i];
+    if (char === '[') {
+      bracketCount++;
+    } else if (char === ']') {
+      bracketCount--;
+      if (bracketCount === 0) {
+        endIndex = i;
+        break;
+      }
+    }
+  }
+
+  if (endIndex === -1) {
+    throw new Error("Erreur lors du parsing des crochets du flux d'annonces.");
+  }
+
+  const rawChunk = html.substring(startIndex, endIndex + 1);
+
+  // Unescape JSON from NextJS flight data format inside the HTML push scripts
+  const processed = rawChunk
+    .replace(/\\\\"/g, '__ESCAPED_QUOTE__')
+    .replace(/\\"/g, '"')
+    .replace(/__ESCAPED_QUOTE__/g, '\\"')
+    .replace(/\\u003c/g, '<')
+    .replace(/\\u003e/g, '>')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\\\/g, '\\');
+
+  const items = JSON.parse(processed);
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
   return items.map((item: any) => {
     let priceNum = 0;
     if (item?.price) {
@@ -159,7 +150,7 @@ async function fetchCatalog(query: string, catalogIds = '', retry = true): Promi
       imageUrl = item.photo.url;
     }
     
-    let itemUrl = item?.url || '';
+    let itemUrl = item?.url || item?.path || '';
     if (itemUrl && !itemUrl.startsWith('http')) {
       itemUrl = `https://www.vinted.fr${itemUrl}`;
     }
