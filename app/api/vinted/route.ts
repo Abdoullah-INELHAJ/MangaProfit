@@ -18,10 +18,8 @@ let estimatedOpenAiCost = 0; // in USD
 let serverIpCached = '';
 let isFetchingIp = false;
 
-// Cooldown Mode for anti-blocking
-let isCooldownActive = false;
-let cooldownEndTime = 0;
-const COOLDOWN_DURATION_MS = 60000; // 1 minute cooldown if blocked by Vinted
+// Cache Mode
+const CACHE_DURATION_MS = 5000; // 5 seconds cache for near-instant search updates
 
 // Vinted Token Cache
 let cachedCookie = '';
@@ -66,7 +64,6 @@ async function fetchTokens() {
 
     if (homeRes.status === 403) {
       total403Errors++;
-      triggerCooldown();
       throw new Error("Vinted blocked handshake with 403 Forbidden");
     }
 
@@ -102,11 +99,7 @@ async function fetchTokens() {
   }
 }
 
-function triggerCooldown() {
-  isCooldownActive = true;
-  cooldownEndTime = Date.now() + COOLDOWN_DURATION_MS;
-  console.error(`[Anti-Blocking] 403 Block detected! Entering cooldown mode for ${COOLDOWN_DURATION_MS / 1000}s.`);
-}
+// OpenAI API batch calls with rate limits, retries, and cost estimation
 
 // OpenAI API batch calls with rate limits, retries, and cost estimation
 async function callOpenAIBatch(batchItems: any[], searchQuery: string, retryCount = 0): Promise<Record<string, any>> {
@@ -182,16 +175,6 @@ function queueVintedRequest(fn: () => Promise<any>): Promise<any> {
 }
 
 async function fetchCatalog(query: string, catalogIds = '', retry = true): Promise<any[]> {
-  // Check Cooldown
-  if (isCooldownActive) {
-    if (Date.now() < cooldownEndTime) {
-      console.log("[Anti-Blocking] Cooldown active, returning cached or empty results.");
-      throw new Error("Vinted temporary cooldown active (403 block safety)");
-    } else {
-      isCooldownActive = false;
-      console.log("[Anti-Blocking] Cooldown finished. Resuming scraping.");
-    }
-  }
 
   if (!cachedCookie || (Date.now() - tokenFetchedAt > 10 * 60 * 1000)) {
     await fetchTokens();
@@ -222,7 +205,6 @@ async function fetchCatalog(query: string, catalogIds = '', retry = true): Promi
   
   if (res.status === 403) {
     total403Errors++;
-    triggerCooldown();
     throw new Error("Vinted search returned 403 Forbidden");
   }
 
@@ -370,7 +352,7 @@ export async function GET(request: Request) {
     const cacheKey = `${query.toLowerCase().trim()}_cat_${catalogIds}`;
     
     // Check persistent search cache (survives restarts, TTL 30s as requested)
-    const cachedData = persistentCache.getSearch(cacheKey, 30000);
+    const cachedData = persistentCache.getSearch(cacheKey, CACHE_DURATION_MS);
     if (cachedData) {
       cacheHits++;
       console.log(`[Cache Hit] Serving persistent cached results for query: "${query}"`);
@@ -386,7 +368,7 @@ export async function GET(request: Request) {
           cacheMisses,
           openAiCalls,
           estimatedOpenAiCost: Number(estimatedOpenAiCost.toFixed(5)),
-          cooldownActive: isCooldownActive
+          cooldownActive: false
         }
       });
     }
@@ -400,7 +382,7 @@ export async function GET(request: Request) {
     persistentCache.setSearch(cacheKey, items);
 
     // Clean expired cache items in background
-    persistentCache.clearExpired(30000);
+    persistentCache.clearExpired(CACHE_DURATION_MS);
 
     return NextResponse.json({ 
       items, 
@@ -414,14 +396,14 @@ export async function GET(request: Request) {
         cacheMisses,
         openAiCalls,
         estimatedOpenAiCost: Number(estimatedOpenAiCost.toFixed(5)),
-        cooldownActive: isCooldownActive
+        cooldownActive: false
       }
     });
   } catch (error: any) {
     console.error("[Vinted API] Request failed:", error);
     return NextResponse.json({ 
       items: [], 
-      error: "Le serveur est en cours de refroidissement (Anti-Blocage Vinted actif).",
+      error: "Une erreur est survenue lors de la communication avec Vinted.",
       details: error.message || String(error),
       serverIp: serverIpCached || 'Verification...',
       stats: {
@@ -432,7 +414,7 @@ export async function GET(request: Request) {
         cacheMisses,
         openAiCalls,
         estimatedOpenAiCost: Number(estimatedOpenAiCost.toFixed(5)),
-        cooldownActive: isCooldownActive
+        cooldownActive: false
       }
     }, { status: 200 });
   }

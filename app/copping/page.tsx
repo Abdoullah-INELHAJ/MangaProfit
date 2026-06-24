@@ -65,7 +65,7 @@ export default function CoppingPage() {
     if (isLiveActive && searchQuery) {
       intervalId = setInterval(() => {
         fetchVintedListings(searchQuery, true);
-      }, 1000);
+      }, 5000);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -301,7 +301,7 @@ export default function CoppingPage() {
             Sniper de Deals <span style={{ color: 'var(--accent-gold)' }}>Copping</span>
           </h1>
           <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Moteur de recherche temps réel enrichi par une **IA d'analyse d'annonces** (lots vs unité, détection manga, classification volumes).
+            Flux live de Vinted mis à jour toutes les 5 secondes. Détection de lots, de reventes unitaires et scores de rentabilité.
           </p>
         </div>
 
@@ -350,9 +350,6 @@ export default function CoppingPage() {
           <div style={{ borderLeft: '1px solid var(--border-light)', paddingLeft: '12px' }}>🔍 Cache Misses : <strong>{stats.cacheMisses}</strong></div>
           <div style={{ borderLeft: '1px solid var(--border-light)', paddingLeft: '12px' }}>🤖 OpenAI Calls : <strong>{stats.openAiCalls}</strong></div>
           <div style={{ borderLeft: '1px solid var(--border-light)', paddingLeft: '12px' }}>💵 Coût Estimé OpenAI : <strong style={{ color: 'var(--accent-gold)' }}>${stats.estimatedOpenAiCost.toFixed(5)}</strong></div>
-          {stats.cooldownActive && (
-            <div style={{ borderLeft: '1px solid var(--border-light)', paddingLeft: '12px', color: 'var(--danger)', fontWeight: 700, animation: 'pulse 1s infinite' }}>⚠️ REPOS ANTI-BLOCAGE (60s)</div>
-          )}
         </div>
       )}
 
