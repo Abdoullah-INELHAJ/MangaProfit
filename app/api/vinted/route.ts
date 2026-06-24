@@ -164,7 +164,7 @@ async function fetchCatalog(query: string, catalogIds = '', retry = true): Promi
       condition: item?.status || item?.item_box?.second_line || 'Bon état',
       description: item?.item_box?.accessibility_label || 'Pas de description disponible.'
     };
-  });
+  }).sort((a: any, b: any) => Number(b.id) - Number(a.id));
 }
 
 export async function GET(request: Request) {

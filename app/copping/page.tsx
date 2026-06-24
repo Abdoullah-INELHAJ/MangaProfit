@@ -101,8 +101,8 @@ export default function CoppingPage() {
           const uniqueNew = incoming.filter(inc => !prev.some(p => p.id === inc.id));
           const merged = [...uniqueNew, ...prev.filter(p => incoming.some(inc => inc.id === p.id))];
           
-          // Sort newest strictly first
-          merged.sort((a, b) => b.receivedAt - a.receivedAt);
+          // Sort by Vinted ID descending (sequential IDs = highest ID is the absolute newest post)
+          merged.sort((a, b) => Number(b.id) - Number(a.id));
           
           return merged.slice(0, 50);
         });
