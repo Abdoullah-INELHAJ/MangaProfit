@@ -13,16 +13,16 @@ export default function DashboardPage() {
   const totalMangas = mangas.length;
   
   const calculateROI = (m: Manga) => {
-    if (m.maxBuyPrice <= 0) return 0;
-    return ((m.minSellPrice - m.maxBuyPrice) / m.maxBuyPrice) * 100;
+    if (m.prix_achat_max <= 0) return 0;
+    return ((m.prix_vente_min - m.prix_achat_max) / m.prix_achat_max) * 100;
   };
 
   const calculateMargin = (m: Manga) => {
-    return m.minSellPrice - m.maxBuyPrice;
+    return m.prix_vente_min - m.prix_achat_max;
   };
 
   const avgMaxBuy = totalMangas > 0 
-    ? mangas.reduce((sum, m) => sum + m.maxBuyPrice, 0) / totalMangas 
+    ? mangas.reduce((sum, m) => sum + m.prix_achat_max, 0) / totalMangas 
     : 0;
 
   const avgMargin = totalMangas > 0 
@@ -93,7 +93,7 @@ export default function DashboardPage() {
             <DollarSign size={20} />
           </div>
           <div>
-            <span style={kpiLabelStyle}>Prix d&apos;achat moyen</span>
+            <span style={kpiLabelStyle}>Prix d&apos;achat moyen u.</span>
             <h2 style={kpiNumStyle}>{avgMaxBuy.toFixed(2)} €</h2>
             <span style={kpiSubStyle}>Par tome ou lot</span>
           </div>
@@ -104,7 +104,7 @@ export default function DashboardPage() {
             <TrendingUp size={20} />
           </div>
           <div>
-            <span style={kpiLabelStyle}>Marge moy. estimée</span>
+            <span style={kpiLabelStyle}>Marge moy. u. estimée</span>
             <h2 style={kpiNumStyle}>+{avgMargin.toFixed(2)} €</h2>
             <span style={kpiSubStyle}>Bénéfice minimum brut</span>
           </div>
@@ -128,7 +128,7 @@ export default function DashboardPage() {
         <div className="glass-panel" style={chartPanelStyle}>
           <h3 style={chartTitleStyle}>
             <DollarSign size={18} style={{ color: 'var(--accent-neon)' }} />
-            Top 5 des Meilleures Marges (€)
+            Top 5 des Meilleures Marges Unitaires (€)
           </h3>
           
           <div style={barChartContainerStyle}>
@@ -144,7 +144,7 @@ export default function DashboardPage() {
                     <div style={{ ...barInnerStyle, height: `${barHeightPct}%` }}></div>
                   </div>
                   <Link href={`/manga/${m.id}`} style={barLabelStyle}>
-                    {m.title.length > 14 ? `${m.title.slice(0, 12)}...` : m.title}
+                    {m.nom_arc_collection.length > 14 ? `${m.nom_arc_collection.slice(0, 12)}...` : m.nom_arc_collection}
                   </Link>
                 </div>
               );
@@ -170,7 +170,7 @@ export default function DashboardPage() {
                   const strokeDasharray = `${percent} ${100 - percent}`;
                   const strokeDashoffset = -cumulativePercent;
                   cumulativePercent += percent;
-
+ 
                   return (
                     <circle
                       key={item.label}
@@ -216,7 +216,7 @@ export default function DashboardPage() {
         <div className="glass-panel" style={{ padding: '20px' }}>
           <h3 style={rankingHeaderStyle}>
             <Award size={18} style={{ color: 'var(--success)' }} />
-            Mangas par Meilleur ROI (%)
+            Mangas par Meilleur ROI Unit. (%)
           </h3>
           <div style={listContainerStyle}>
             {topROI.map((m, index) => {
@@ -225,12 +225,12 @@ export default function DashboardPage() {
                 <div key={m.id} style={rankingRowStyle}>
                   <span style={rankingNumberStyle}>{index + 1}</span>
                   <div style={{ flex: 1 }}>
-                    <Link href={`/manga/${m.id}`} style={rankingTitleStyle}>{m.title}</Link>
-                    <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{m.series}</span>
+                    <Link href={`/manga/${m.id}`} style={rankingTitleStyle}>{m.nom_arc_collection}</Link>
+                    <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{m.titre}</span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <span style={{ color: 'var(--success)', fontWeight: 700, fontSize: '1rem' }}>+{roi.toFixed(0)} %</span>
-                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Achat: {m.maxBuyPrice}€</span>
+                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Achat: {m.prix_achat_max.toFixed(2)}€</span>
                   </div>
                 </div>
               );
@@ -242,7 +242,7 @@ export default function DashboardPage() {
         <div className="glass-panel" style={{ padding: '20px' }}>
           <h3 style={rankingHeaderStyle}>
             <DollarSign size={18} style={{ color: 'var(--accent-blue)' }} />
-            Meilleures Marges (€)
+            Meilleures Marges Unitaires (€)
           </h3>
           <div style={listContainerStyle}>
             {topMargin.map((m, index) => {
@@ -251,12 +251,12 @@ export default function DashboardPage() {
                 <div key={m.id} style={rankingRowStyle}>
                   <span style={rankingNumberStyle}>{index + 1}</span>
                   <div style={{ flex: 1 }}>
-                    <Link href={`/manga/${m.id}`} style={rankingTitleStyle}>{m.title}</Link>
-                    <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{m.series}</span>
+                    <Link href={`/manga/${m.id}`} style={rankingTitleStyle}>{m.nom_arc_collection}</Link>
+                    <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{m.titre}</span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <span style={{ color: 'var(--accent-blue)', fontWeight: 700, fontSize: '1rem' }}>+{margin.toFixed(2)} €</span>
-                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Revente min: {m.minSellPrice}€</span>
+                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Revente min: {m.prix_vente_min.toFixed(2)}€</span>
                   </div>
                 </div>
               );

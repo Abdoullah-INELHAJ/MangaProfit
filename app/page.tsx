@@ -28,7 +28,7 @@ export default function HomePage() {
   // Suggestions while typing
   const suggestions = searchQuery.trim()
     ? mangas
-        .filter(m => m.title.toLowerCase().includes(searchQuery.toLowerCase()))
+        .filter(m => m.nom_arc_collection.toLowerCase().includes(searchQuery.toLowerCase()) || m.titre.toLowerCase().includes(searchQuery.toLowerCase()))
         .slice(0, 5)
     : [];
 
@@ -59,6 +59,12 @@ export default function HomePage() {
     if (roi >= 80) return '⭐ Excellent';
     if (roi >= 40) return '👍 Bon';
     return '❌ Eviter';
+  };
+
+  const formatVolumeRange = (debut: number, fin: number) => {
+    if (debut === fin) return `Tome ${debut}`;
+    if (fin >= 999) return `Tome ${debut} et +`;
+    return `Tomes ${debut} à ${fin}`;
   };
 
   return (
@@ -105,18 +111,18 @@ export default function HomePage() {
                   key={s.id}
                   style={suggestionItemStyle}
                   onClick={() => {
-                    setSearchQuery(s.title);
+                    setSearchQuery(s.nom_arc_collection);
                     setShowSuggestions(false);
                   }}
                 >
                   <div style={{ display: 'flex', flexDirection: 'column' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.title}</span>
+                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.nom_arc_collection}</span>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      Achat max: {s.maxBuyPrice.toFixed(2)}€ • Revente: {s.minSellPrice}-{s.maxSellPrice}€
+                      Achat max: {s.prix_achat_max.toFixed(2)}€/tome • Revente: {s.prix_vente_min.toFixed(2)}-{s.prix_vente_max.toFixed(2)}€/tome
                     </span>
                   </div>
-                  <div className={`badge-roi ${getROIClass(calculateROI(s.maxBuyPrice, s.minSellPrice))}`} style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
-                    ROI: +{calculateROI(s.maxBuyPrice, s.minSellPrice).toFixed(0)}%
+                  <div className={`badge-roi ${getROIClass(calculateROI(s.prix_achat_max, s.prix_vente_min))}`} style={{ fontSize: '0.7rem', padding: '2px 8px' }}>
+                    ROI: +{calculateROI(s.prix_achat_max, s.prix_vente_min).toFixed(0)}%
                   </div>
                 </div>
               ))}
@@ -213,20 +219,20 @@ export default function HomePage() {
       {/* Grid of Results */}
       <div style={gridStyle}>
         {filteredMangas.map((manga) => {
-          const roi = calculateROI(manga.maxBuyPrice, manga.minSellPrice);
+          const roi = calculateROI(manga.prix_achat_max, manga.prix_vente_min);
           const roiClass = getROIClass(roi);
           
           return (
             <div key={manga.id} className="glass-panel" style={cardStyle}>
               {/* Cover visual */}
               <Link href={`/manga/${manga.id}`} style={{ textDecoration: 'none' }}>
-                <MangaCover title={manga.title} series={manga.series} volumeRange={manga.volumeRange} />
+                <MangaCover title={manga.nom_arc_collection} series={manga.titre} volumeRange={formatVolumeRange(manga.volume_debut, manga.volume_fin)} />
               </Link>
               
               {/* Card info */}
               <div style={cardBodyStyle}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                  <span style={seriesBadgeStyle}>{manga.series}</span>
+                  <span style={seriesBadgeStyle}>{manga.titre}</span>
                   <button
                     onClick={() => toggleFavorite(manga.id)}
                     style={favoriteButtonStyle}
@@ -236,18 +242,18 @@ export default function HomePage() {
                 </div>
                 
                 <Link href={`/manga/${manga.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-                  <h3 style={cardTitleStyle}>{manga.title}</h3>
+                  <h3 style={cardTitleStyle}>{manga.nom_arc_collection}</h3>
                 </Link>
                 
                 {/* Stats */}
                 <div style={statsWrapperStyle}>
                   <div style={statItemStyle}>
                     <span style={statLabelStyle}>Achat Max <InfoTooltip term="maxbuy" /></span>
-                    <span style={statValueStyle}>{manga.maxBuyPrice.toFixed(2)} €</span>
+                    <span style={statValueStyle}>{manga.prix_achat_max.toFixed(2)} € <span style={{ fontSize: '0.65rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>/u</span></span>
                   </div>
                   <div style={statItemStyle}>
                     <span style={statLabelStyle}>Revente Estimée <InfoTooltip term="margin" /></span>
-                    <span style={statValueStyle}>{manga.minSellPrice}-{manga.maxSellPrice} €</span>
+                    <span style={statValueStyle}>{manga.prix_vente_min.toFixed(2)}-{manga.prix_vente_max.toFixed(2)} € <span style={{ fontSize: '0.65rem', fontWeight: 'normal', color: 'var(--text-secondary)' }}>/u</span></span>
                   </div>
                 </div>
                 

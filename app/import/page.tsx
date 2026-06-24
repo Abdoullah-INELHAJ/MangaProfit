@@ -2,8 +2,8 @@
 
 import React, { useState, useRef } from 'react';
 import { useData } from '../../context/DataContext';
-import { exportToCSV, parseCSVData, generateSlug } from '../../lib/dbAdapter';
-import { Upload, Download, RefreshCw, CheckCircle, AlertTriangle, FileSpreadsheet } from 'lucide-react';
+import { exportToCSV, parseCSVData, generateSlug, cleanTitle, parseVolumeRange } from '../../lib/dbAdapter';
+import { Upload, Download, RefreshCw, CheckCircle, AlertTriangle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Manga } from '../../lib/defaultData';
 
@@ -61,8 +61,8 @@ export default function ImportExportPage() {
         for (const row of mangaRows) {
           if (!row || row.length === 0) continue;
           
-          const title = String(row[0] || '').trim();
-          if (!title || title.toLowerCase().includes('manga') || title.toLowerCase().includes('prix max d')) {
+          const displayTitle = String(row[0] || '').trim();
+          if (!displayTitle || displayTitle.toLowerCase().includes('manga') || displayTitle.toLowerCase().includes('prix max d')) {
             continue;
           }
 
@@ -73,31 +73,24 @@ export default function ImportExportPage() {
           const maxSellPrice = parseFloat(String(row[5]).replace(',', '.') || '0') || 0;
           const notes = row[7] ? String(row[7]).trim() : '';
 
-          // Extraction
-          let series = title;
-          let volumeRange = 'Tome Unique / Lot';
-          const match = title.match(/(.*?)\s+(\d+\s+a\s+\d+|\d+\s+et\s+\+)/i);
-          if (match) {
-            series = match[1].trim();
-            volumeRange = match[2].trim().replace(/\s+a\s+/i, ' à ').replace(/\s+et\s+\+/i, ' & +');
-          } else if (title.includes('Collector')) {
-            series = title.split(/Collector/i)[0].trim();
-            volumeRange = 'Collector';
-          }
+          // Extraction using the helper functions
+          const titre = cleanTitle(displayTitle);
+          const { debut, fin } = parseVolumeRange(displayTitle, '');
 
           const hypeScore = Math.floor(Math.random() * 40) + 50;
           const popularity = hypeScore >= 80 ? 'Très forte' : hypeScore >= 65 ? 'Forte' : hypeScore >= 50 ? 'Moyenne' : 'Faible';
 
           importedMangas.push({
-            id: generateSlug(title),
-            title,
-            series,
-            volumeRange,
-            condition,
-            retailPrice,
-            maxBuyPrice,
-            minSellPrice,
-            maxSellPrice,
+            id: generateSlug(displayTitle),
+            titre,
+            nom_arc_collection: displayTitle,
+            volume_debut: debut,
+            volume_fin: fin,
+            état: condition,
+            prix_moyen_neuf: retailPrice,
+            prix_achat_max: maxBuyPrice,
+            prix_vente_min: minSellPrice,
+            prix_vente_max: maxSellPrice,
             notes,
             hypeScore,
             popularity,

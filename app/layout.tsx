@@ -60,6 +60,10 @@ export default function RootLayout({
                     <BarChart2 size={18} />
                     <span>Tableau de Bord</span>
                   </Link>
+                  <Link href="/copping" className="header-nav-link" style={navLinkStyle}>
+                    <Zap size={18} />
+                    <span>Copping</span>
+                  </Link>
                   <Link href="/import" className="header-nav-link" style={navLinkStyle}>
                     <Download size={18} />
                     <span>Import/Export</span>

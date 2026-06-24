@@ -99,7 +99,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Reset database back to default Excel seed
   const resetDatabase = () => {
     if (isLocalStorageAvailable()) {
-      localStorage.removeItem('mangaprofit_data');
+      localStorage.removeItem('mangaprofit_data_v2');
       localStorage.removeItem('mangaprofit_favorites');
       localStorage.removeItem('mangaprofit_tags');
     }
@@ -109,17 +109,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // Helper calculation values for filtering & sorting
   const getMangaROI = (m: Manga): number => {
-    if (m.maxBuyPrice <= 0) return 0;
-    const margin = m.minSellPrice - m.maxBuyPrice;
-    return (margin / m.maxBuyPrice) * 100;
+    if (m.prix_achat_max <= 0) return 0;
+    const margin = m.prix_vente_min - m.prix_achat_max;
+    return (margin / m.prix_achat_max) * 100;
   };
 
   const getMangaMargin = (m: Manga): number => {
-    return m.minSellPrice - m.maxBuyPrice;
-  };
-
-  const getMangaPopularityValue = (m: Manga): number => {
-    return m.hypeScore;
+    return m.prix_vente_min - m.prix_achat_max;
   };
 
   // Apply filters and search query
@@ -130,14 +126,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
       result = result.filter(m => {
-        const titleMatch = m.title.toLowerCase().includes(query);
-        const seriesMatch = m.series.toLowerCase().includes(query);
+        const titleMatch = m.nom_arc_collection.toLowerCase().includes(query);
+        const seriesMatch = m.titre.toLowerCase().includes(query);
         
         // Simple typo tolerance (levenshtein distance distance 1 or 2, simplified)
         // Check if characters of query appear sequentially in title
         let charIdx = 0;
-        for (let i = 0; i < m.title.length && charIdx < query.length; i++) {
-          if (m.title[i].toLowerCase() === query[charIdx]) {
+        for (let i = 0; i < m.nom_arc_collection.length && charIdx < query.length; i++) {
+          if (m.nom_arc_collection[i].toLowerCase() === query[charIdx]) {
             charIdx++;
           }
         }
@@ -149,12 +145,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     // Condition filter
     if (filters.condition !== 'Tous') {
-      result = result.filter(m => m.condition === filters.condition);
+      result = result.filter(m => m.état === filters.condition);
     }
 
     // Series/Category filter
     if (filters.series !== 'Toutes') {
-      result = result.filter(m => m.series === filters.series);
+      result = result.filter(m => m.titre === filters.series);
     }
 
     // Custom Tag filter
@@ -164,8 +160,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     // Sort operations
     result.sort((a, b) => {
-      let valA: any = a.title.toLowerCase();
-      let valB: any = b.title.toLowerCase();
+      let valA: any = a.nom_arc_collection.toLowerCase();
+      let valB: any = b.nom_arc_collection.toLowerCase();
 
       if (filters.sortBy === 'roi') {
         valA = getMangaROI(a);
@@ -174,11 +170,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
         valA = getMangaMargin(a);
         valB = getMangaMargin(b);
       } else if (filters.sortBy === 'popularity') {
-        valA = getMangaPopularityValue(a);
-        valB = getMangaPopularityValue(b);
+        valA = a.hypeScore;
+        valB = b.hypeScore;
       } else if (filters.sortBy === 'retailPrice') {
-        valA = a.retailPrice;
-        valB = b.retailPrice;
+        valA = a.prix_moyen_neuf;
+        valB = b.prix_moyen_neuf;
       }
 
       if (valA < valB) return filters.sortOrder === 'asc' ? -1 : 1;
@@ -189,8 +185,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
     setFilteredMangas(result);
   }, [mangas, searchQuery, filters]);
 
-  // Extract all unique series
-  const allSeries = Array.from(new Set(mangas.map(m => m.series))).sort();
+  // Extract all unique series (titres)
+  const allSeries = Array.from(new Set(mangas.map(m => m.titre))).sort();
 
   // Extract all unique tags
   const allTags = Array.from(

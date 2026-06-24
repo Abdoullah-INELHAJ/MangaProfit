@@ -1,11 +1,61 @@
 import { DEFAULT_MANGAS, Manga } from './defaultData';
 
-const LOCAL_STORAGE_KEY = 'mangaprofit_data';
+const LOCAL_STORAGE_KEY = 'mangaprofit_data_v2'; // Upgraded database version key
 const FAVORITES_KEY = 'mangaprofit_favorites';
 const TAGS_KEY = 'mangaprofit_tags';
 
 export function isLocalStorageAvailable(): boolean {
   return typeof window !== 'undefined' && window.localStorage !== undefined;
+}
+
+// Helper to parse volume range from text
+export function parseVolumeRange(title: string, rangeText: string): { debut: number; fin: number } {
+  const combined = `${rangeText} ${title}`.toLowerCase();
+  
+  // Try pattern "20 et +" or "11+" or "10 & +"
+  const plusMatch = combined.match(/\b(\d+)\s*(?:et\s*\+|\+|\&\s*\+)/i);
+  if (plusMatch) {
+    return { debut: parseInt(plusMatch[1], 10), fin: 999 };
+  }
+  
+  // Try pattern "1 à 10" or "10 à 20" or "1-10" or "10 16"
+  const rangeMatch = combined.match(/\b(\d+)\s*(?:a|à|au|et|-)\s*(\d+)\b/i);
+  if (rangeMatch) {
+    return { debut: parseInt(rangeMatch[1], 10), fin: parseInt(rangeMatch[2], 10) };
+  }
+  
+  // Find any consecutive numbers in sequence
+  const numbers = combined.match(/\d+/g);
+  if (numbers && numbers.length >= 2) {
+    const parsed = numbers.map(n => parseInt(n, 10));
+    return { debut: Math.min(...parsed), fin: Math.max(...parsed) };
+  } else if (numbers && numbers.length === 1) {
+    const single = parseInt(numbers[0], 10);
+    return { debut: single, fin: single };
+  }
+  
+  return { debut: 1, fin: 1 };
+}
+
+// Helper to clean manga title (extract name without range numbers)
+export function cleanTitle(title: string): string {
+  let cleaned = title;
+  const patternsToRemove = [
+    /\b\d+\s*(?:a|à|et|au|-)\s*\d+\b/gi,
+    /\b\d+\s*(?:et\s*\+|\+|\&\s*\+)/gi,
+    /\b\d+\s+\d+\b/gi,
+    /\bcollector\b.*/gi,
+    /\btome\s+\d+\b/gi,
+    /\bvol\.*\s*\d+\b/gi
+  ];
+  
+  patternsToRemove.forEach(pat => {
+    cleaned = cleaned.replace(pat, '');
+  });
+  
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  if (!cleaned) cleaned = title;
+  return cleaned;
 }
 
 // Get all mangas (from localStorage or defaults)
@@ -21,7 +71,6 @@ export function getMangas(): Manga[] {
   
   try {
     const mangas: Manga[] = JSON.parse(saved);
-    // Combine with favorites
     const favorites = getFavorites();
     const tagsMap = getTagsMap();
     
@@ -87,6 +136,90 @@ export function generateSlug(title: string): string {
     .replace(/(^-|-$)+/g, '');
 }
 
+// Calculate ROI and total pricing details for a lot range of volumes
+export interface LotPricingDetail {
+  volume: number;
+  prix_moyen_neuf: number;
+  prix_achat_max: number;
+  prix_vente_min: number;
+  prix_vente_max: number;
+  sourceSegment: string;
+}
+
+export interface LotPricingResult {
+  totalVolumes: number;
+  prix_moyen_neuf: number;
+  prix_achat_max: number;
+  prix_vente_min: number;
+  prix_vente_max: number;
+  details: LotPricingDetail[];
+}
+
+export function calculateLotPricing(
+  titre: string,
+  startVol: number,
+  endVol: number,
+  allMangas: Manga[],
+  fallbackManga: Manga
+): LotPricingResult {
+  const details: LotPricingDetail[] = [];
+  let totalNeuf = 0;
+  let totalAchatMax = 0;
+  let totalVenteMin = 0;
+  let totalVenteMax = 0;
+
+  // Normalise title to check matching segment
+  const cleanTitreLower = cleanTitle(titre).toLowerCase();
+  
+  // Filter all segments belonging to this manga series
+  const segments = allMangas.filter(m => cleanTitle(m.titre).toLowerCase() === cleanTitreLower);
+
+  const start = Math.min(startVol, endVol);
+  const end = Math.max(startVol, endVol);
+
+  for (let v = start; v <= end; v++) {
+    // Find the correct pricing segment for volume v
+    let matchedSegment = segments.find(s => v >= s.volume_debut && v <= s.volume_fin);
+    
+    // If not found, try a wider find or fallback to the current item
+    if (!matchedSegment && segments.length > 0) {
+      // Fallback: if v is higher than any fin, grab the last segment (e.g. 20 et +)
+      // if v is lower, grab the first segment
+      const sorted = [...segments].sort((a, b) => a.volume_debut - b.volume_debut);
+      if (v > sorted[sorted.length - 1].volume_fin) {
+        matchedSegment = sorted[sorted.length - 1];
+      } else {
+        matchedSegment = sorted[0];
+      }
+    }
+
+    const activeManga = matchedSegment || fallbackManga;
+
+    totalNeuf += activeManga.prix_moyen_neuf;
+    totalAchatMax += activeManga.prix_achat_max;
+    totalVenteMin += activeManga.prix_vente_min;
+    totalVenteMax += activeManga.prix_vente_max;
+
+    details.push({
+      volume: v,
+      prix_moyen_neuf: activeManga.prix_moyen_neuf,
+      prix_achat_max: activeManga.prix_achat_max,
+      prix_vente_min: activeManga.prix_vente_min,
+      prix_vente_max: activeManga.prix_vente_max,
+      sourceSegment: activeManga.nom_arc_collection
+    });
+  }
+
+  return {
+    totalVolumes: details.length,
+    prix_moyen_neuf: totalNeuf,
+    prix_achat_max: totalAchatMax,
+    prix_vente_min: totalVenteMin,
+    prix_vente_max: totalVenteMax,
+    details
+  };
+}
+
 // Parse Semicolon/Comma separated CSV
 export function parseCSVData(csvText: string): Manga[] {
   const lines = csvText.split(/\r?\n/);
@@ -95,12 +228,11 @@ export function parseCSVData(csvText: string): Manga[] {
   let headerIndex = -1;
   let delimiter = ';';
   
-  // Try to find the header row. Standard header row has "Manga / Titre" or similar.
+  // Find the header row
   for (let i = 0; i < Math.min(lines.length, 10); i++) {
     const line = lines[i];
     if (line.includes('Manga') || line.includes('Titre') || line.includes('Achat Max')) {
       headerIndex = i;
-      // Detect delimiter
       if (line.split(';').length > line.split(',').length) {
         delimiter = ';';
       } else {
@@ -110,20 +242,18 @@ export function parseCSVData(csvText: string): Manga[] {
     }
   }
   
-  // If no header found, assume standard structure and starts at row 0 or 1
   const startRow = headerIndex !== -1 ? headerIndex + 1 : 0;
   
   for (let i = startRow; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
     
-    // Split respecting possible quotes (simple CSV parser)
     const cols = splitCSVLine(line, delimiter);
     if (cols.length < 3) continue;
     
-    const title = cols[0]?.trim();
-    if (!title || title.toLowerCase().includes('manga / titre') || title.toLowerCase().includes('prix max d')) {
-      continue; // Skip comments/headers
+    const displayTitle = cols[0]?.trim();
+    if (!displayTitle || displayTitle.toLowerCase().includes('manga / titre') || displayTitle.toLowerCase().includes('prix max d')) {
+      continue;
     }
     
     const condition = cols[1]?.trim() || 'TBE';
@@ -134,33 +264,23 @@ export function parseCSVData(csvText: string): Manga[] {
     const notes = cols[7]?.trim() || '';
     
     // Series and Volume extraction
-    let series = title;
-    let volumeRange = 'Tome Unique / Lot';
-    
-    const match = title.match(/(.*?)\s+(\d+\s+a\s+\d+|\d+\s+et\s+\+)/i);
-    if (match) {
-      series = match[1].trim();
-      volumeRange = match[2].trim().replace(/\s+a\s+/i, ' à ').replace(/\s+et\s+\+/i, ' & +');
-    } else if (title.includes('Collector')) {
-      const parts = title.split(/Collector/i);
-      series = parts[0].trim();
-      volumeRange = 'Collector';
-    }
-    
-    // Dynamic hype and popularity score
-    const hypeScore = Math.floor(Math.random() * 40) + 50; // Random default 50-90
+    const titre = cleanTitle(displayTitle);
+    const { debut, fin } = parseVolumeRange(displayTitle, '');
+
+    const hypeScore = Math.floor(Math.random() * 40) + 50;
     const popularity = hypeScore >= 80 ? 'Très forte' : hypeScore >= 65 ? 'Forte' : hypeScore >= 50 ? 'Moyenne' : 'Faible';
     
     parsedMangas.push({
-      id: generateSlug(title),
-      title,
-      series,
-      volumeRange,
-      condition,
-      retailPrice,
-      maxBuyPrice,
-      minSellPrice,
-      maxSellPrice,
+      id: generateSlug(displayTitle),
+      titre,
+      nom_arc_collection: displayTitle,
+      volume_debut: debut,
+      volume_fin: fin,
+      état: condition,
+      prix_moyen_neuf: retailPrice,
+      prix_achat_max: maxBuyPrice,
+      prix_vente_min: minSellPrice,
+      prix_vente_max: maxSellPrice,
       notes,
       hypeScore,
       popularity,
@@ -191,7 +311,6 @@ function splitCSVLine(line: string, delimiter: string): string[] {
   }
   result.push(current);
   
-  // Clean double quotes
   return result.map(s => s.replace(/^"|"$/g, '').trim());
 }
 
@@ -210,18 +329,18 @@ export function exportToCSV(mangas: Manga[]): string {
   ];
   
   const rows = mangas.map(m => [
-    m.title,
-    m.condition,
-    m.retailPrice.toString().replace('.', ','),
-    m.maxBuyPrice.toString().replace('.', ','),
-    m.minSellPrice.toString().replace('.', ','),
-    m.maxSellPrice.toString().replace('.', ','),
+    m.nom_arc_collection,
+    m.état,
+    m.prix_moyen_neuf.toString().replace('.', ','),
+    m.prix_achat_max.toString().replace('.', ','),
+    m.prix_vente_min.toString().replace('.', ','),
+    m.prix_vente_max.toString().replace('.', ','),
     m.hypeScore >= 75 ? '⭐ Excellent' : m.hypeScore >= 60 ? '👍 Bon' : '⚠️ Moyen',
-    m.notes
+    m.notes || ''
   ]);
   
   const csvContent = [
-    '🎌  MANGA PRICE TRACKER  —  Vinted;;;;;;;', // Excel header title line
+    '🎌  MANGA PRICE TRACKER  —  Vinted;;;;;;;', 
     headers.join(delimiter),
     ...rows.map(row => row.map(val => `"${val.replace(/"/g, '""')}"`).join(delimiter))
   ].join('\n');
