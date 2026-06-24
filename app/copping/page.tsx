@@ -14,8 +14,6 @@ interface VintedListing {
   condition: string;
   description: string;
   receivedAt: number;
-  aiVerified?: 'pending' | 'checking' | 'book' | 'non_book';
-  aiReason?: string;
 }
 
 export default function CoppingPage() {
@@ -29,7 +27,6 @@ export default function CoppingPage() {
   // Basic Filters
   const [filterMangaOnly, setFilterMangaOnly] = useState(true); 
   const [filterStrictTime, setFilterStrictTime] = useState(false);
-  const [filterBooksOnly, setFilterBooksOnly] = useState(true); // Filter out cards, clothes, merchandise
   const [maxPrice, setMaxPrice] = useState<string>('');
 
   const [serverIp, setServerIp] = useState('Vérification...');
@@ -51,13 +48,13 @@ export default function CoppingPage() {
     }
   }, [mangas]);
 
-  // Auto-Refresh: Polls every 15 seconds
+  // Auto-Refresh: Polls every 5 seconds
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
     if (isLiveActive && searchQuery) {
       intervalId = setInterval(() => {
         fetchVintedListings(searchQuery, true);
-      }, 15000);
+      }, 5000);
     }
     return () => {
       if (intervalId) clearInterval(intervalId);
@@ -72,7 +69,8 @@ export default function CoppingPage() {
     if (!isSilent && listings.length === 0) setIsLoading(true);
 
     try {
-      const catalogQuery = filterMangaOnly ? '&catalog_ids=1058' : '';
+      // catalog_id=1341 = "Bandes dessinées, mangas et romans graphiques" sur Vinted FR
+      const catalogQuery = filterMangaOnly ? '&catalog_ids=1341' : '';
       const res = await fetch(`/api/vinted?q=${encodeURIComponent(query)}${catalogQuery}&t=${Date.now()}`);
       if (!res.ok) throw new Error("Erreur de connexion API");
       
@@ -97,7 +95,6 @@ export default function CoppingPage() {
             return {
               ...item,
               receivedAt: existing ? existing.receivedAt : now,
-              aiVerified: 'book'
             };
           });
 
@@ -127,17 +124,11 @@ export default function CoppingPage() {
 
   const processedListings = listings
     .filter(lst => {
-      // Strictly filter by age
       if (filterStrictTime) {
         const ageSec = Math.floor((Date.now() - lst.receivedAt) / 1000);
-        if (ageSec > 90) return false; // Show only listings under 90 seconds
+        if (ageSec > 90) return false;
       }
-      
       if (maxPrice && lst.price > parseFloat(maxPrice)) return false;
-      
-      // Filter out non-books using AI / local checks
-      if (filterBooksOnly && lst.aiVerified === 'non_book') return false;
-      
       return true;
     });
 
@@ -150,7 +141,7 @@ export default function CoppingPage() {
             Sniper de Deals <span style={{ color: 'var(--accent-gold)' }}>Copping</span>
           </h1>
           <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Flux d'annonces réelles Vinted mis à jour toutes les 15 secondes.
+            Flux d'annonces réelles Vinted mis à jour toutes les 5 secondes.
           </p>
         </div>
 
@@ -175,7 +166,7 @@ export default function CoppingPage() {
                 animation: isLiveActive ? 'pulse 1.5s infinite' : 'none'
               }}></span>
               <span style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase' }}>
-                {isLiveActive ? 'SNIPER 15s : ACTIF' : 'SNIPER : PAUSE'}
+                {isLiveActive ? 'SNIPER 5s : ACTIF' : 'SNIPER : PAUSE'}
               </span>
             </div>
             <button 
@@ -245,15 +236,11 @@ export default function CoppingPage() {
         <div style={filterFlexStyle}>
           <label style={checkboxLabelStyle}>
             <input type="checkbox" checked={filterMangaOnly} onChange={(e) => setFilterMangaOnly(e.target.checked)} style={checkboxStyle} />
-            <span style={{ color: 'var(--accent-gold)', fontWeight: 700 }}>☑️ Manga uniquement (Cat. Vinted 1058)</span>
+            <span style={{ color: 'var(--accent-gold)', fontWeight: 700 }}>📚 Manga/BD uniquement (Cat. Vinted BD·Manga·Romans graphiques)</span>
           </label>
           <label style={checkboxLabelStyle}>
             <input type="checkbox" checked={filterStrictTime} onChange={(e) => setFilterStrictTime(e.target.checked)} style={checkboxStyle} />
             <span style={{ color: '#ff55aa', fontWeight: 700 }}>☑️ Annonces récentes uniquement (&lt;90s)</span>
-          </label>
-          <label style={checkboxLabelStyle}>
-            <input type="checkbox" checked={filterBooksOnly} onChange={(e) => setFilterBooksOnly(e.target.checked)} style={checkboxStyle} />
-            <span style={{ color: '#00e5ff', fontWeight: 700 }}>🤖 Filtre IA Anti-Merch (Masquer cartes, t-shirts, etc.)</span>
           </label>
 
           <div style={inputFilterWrapperStyle}>
@@ -287,21 +274,6 @@ export default function CoppingPage() {
               <div style={listingCardHeaderStyle}>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <span style={sourceLabelStyle}>Vinted</span>
-                  {lst.aiVerified === 'checking' && (
-                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--accent-gold)', backgroundColor: 'rgba(255, 170, 0, 0.08)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }}>
-                      ⏳ Analyse IA...
-                    </span>
-                  )}
-                  {lst.aiVerified === 'book' && (
-                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.08)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }} title={lst.aiReason}>
-                      ✓ Livre/Manga
-                    </span>
-                  )}
-                  {lst.aiVerified === 'non_book' && (
-                    <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#ef4444', backgroundColor: 'rgba(239, 68, 68, 0.08)', padding: '2px 8px', borderRadius: '4px', textTransform: 'uppercase' }} title={lst.aiReason}>
-                      ❌ Non-Livre
-                    </span>
-                  )}
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <span style={ageSec <= 15 ? liveBadgeStyle : timeLabelStyle}>
