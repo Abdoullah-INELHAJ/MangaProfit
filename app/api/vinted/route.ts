@@ -1,25 +1,15 @@
 import { NextResponse } from 'next/server';
-import { analyzeListingAI } from '../../../lib/vintedAi';
 import { persistentCache } from '../../../lib/persistentCache';
 
-// OpenAI Configuration
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-
-// Global Server-Side Monitoring Metrics
+// Global Server-Side Monitoring Metrics (simplified)
 let totalVintedRequests = 0;
 let total403Errors = 0;
-let total429Errors = 0;
 let cacheHits = 0;
 let cacheMisses = 0;
-let openAiCalls = 0;
-let estimatedOpenAiCost = 0; // in USD
 
 // Server IP address cache
 let serverIpCached = '';
 let isFetchingIp = false;
-
-// Cache Mode
-const CACHE_DURATION_MS = 5000; // 5 seconds cache for near-instant search updates
 
 // Vinted Token Cache
 let cachedCookie = '';
@@ -99,93 +89,24 @@ async function fetchTokens() {
   }
 }
 
-// OpenAI API batch calls with rate limits, retries, and cost estimation
-
-// OpenAI API batch calls with rate limits, retries, and cost estimation
-async function callOpenAIBatch(batchItems: any[], searchQuery: string, retryCount = 0): Promise<Record<string, any>> {
-  if (batchItems.length === 0) return {};
-  
-  // Rate Limit: enforce spacing
-  await delay(1200);
-
-  try {
-    const payload = batchItems.map(item => ({
-      id: item.id,
-      title: item.title,
-      description: item.description.substring(0, 250),
-      price: item.price
-    }));
-
-    openAiCalls++;
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: "You are a Vinted manga search assistant. Analyze the Vinted listings and return a JSON object. The keys must be the item 'id's. Each value must be an object with fields: 'isManga' (boolean), 'type' ('lot' | 'unité' | 'collection'), 'startVolume' (integer), 'endVolume' (integer), 'totalVolumes' (integer), 'mangaName' (string, normalized title of the series), 'confidence' (integer, 0-100), 'aiVerdict' (string, 1-sentence diagnostic explanation in French)."
-          },
-          {
-            role: "user",
-            content: `Search query: "${searchQuery}". Analyze this batch:\n` + JSON.stringify(payload)
-          }
-        ]
-      })
-    });
-
-    if (response.status === 429) {
-      total429Errors++;
-      const delayMs = Math.pow(2, retryCount) * 1500 + Math.random() * 500;
-      console.warn(`[OpenAI] 429 Rate Limit. Retrying in ${Math.round(delayMs)}ms...`);
-      await delay(delayMs);
-      return callOpenAIBatch(batchItems, searchQuery, retryCount + 1);
-    }
-
-    if (!response.ok) {
-      throw new Error(`OpenAI HTTP ${response.status}`);
-    }
-
-    const result = await response.json();
-    
-    // Estimate Cost (gpt-4o-mini rates: $0.15/1M input tokens, $0.60/1M output tokens)
-    const promptTokens = result.usage?.prompt_tokens || 1000;
-    const completionTokens = result.usage?.completion_tokens || 500;
-    const cost = (promptTokens * 0.15 / 1000000) + (completionTokens * 0.60 / 1000000);
-    estimatedOpenAiCost += cost;
-
-    return JSON.parse(result.choices[0].message.content);
-  } catch (err) {
-    console.error("[OpenAI] Batch call error:", err);
-    return {};
-  }
-}
-
 // Sequential queue wrapper for Vinted queries
 function queueVintedRequest(fn: () => Promise<any>): Promise<any> {
   const result = vintedQueueChain.then(fn);
-  // Prevent queue chain rejection blocking next items
   vintedQueueChain = result.catch(() => {});
   return result;
 }
 
 async function fetchCatalog(query: string, catalogIds = '', retry = true): Promise<any[]> {
-
   if (!cachedCookie || (Date.now() - tokenFetchedAt > 10 * 60 * 1000)) {
     await fetchTokens();
   }
 
-  // Anti-Blocking: Add random jitter (500ms to 2000ms delay) before Vinted request
-  const jitter = Math.floor(Math.random() * 1500) + 500;
+  // Anti-Blocking jitter
+  const jitter = Math.floor(Math.random() * 1000) + 500;
   await delay(jitter);
 
   totalVintedRequests++;
-  let url = `https://www.vinted.fr/api/v2/catalog/items?search_text=${encodeURIComponent(query)}&per_page=15&order=newest_first`;
+  let url = `https://www.vinted.fr/api/v2/catalog/items?search_text=${encodeURIComponent(query)}&per_page=20&order=newest_first`;
   if (catalogIds) {
     url += `&catalog_ids=${catalogIds}`;
   }
@@ -221,7 +142,7 @@ async function fetchCatalog(query: string, catalogIds = '', retry = true): Promi
   const data = await res.json();
   const items = data?.items || [];
   
-  const rawListings = items.map((item: any) => {
+  return items.map((item: any) => {
     let priceNum = 0;
     if (item?.price) {
       if (typeof item.price === 'object') {
@@ -253,87 +174,6 @@ async function fetchCatalog(query: string, catalogIds = '', retry = true): Promi
       description: item?.item_box?.accessibility_label || 'Pas de description disponible.'
     };
   });
-
-  const needsOpenAiAnalysis: any[] = [];
-  const localAnalysisResults = rawListings.map((lst: any) => {
-    const cacheKey = `${lst.id}-${lst.price}`;
-    
-    // Check OpenAI persistent cache
-    const cachedAi = persistentCache.getOpenAi(cacheKey);
-    if (cachedAi) {
-      return {
-        ...lst,
-        ai: cachedAi
-      };
-    }
-
-    // Local pre-analysis (80% Rule)
-    const localResult = analyzeListingAI(lst.title, lst.description, lst.price, query);
-    if (localResult.confidence >= 80 && localResult.isManga) {
-      const localExtended = {
-        ...localResult,
-        isExternalAI: false
-      };
-      persistentCache.setOpenAi(cacheKey, localExtended);
-      return {
-        ...lst,
-        ai: localExtended
-      };
-    }
-
-    // Unconfident -> Queue for OpenAI Batch
-    needsOpenAiAnalysis.push(lst);
-    return lst;
-  });
-
-  if (needsOpenAiAnalysis.length > 0) {
-    try {
-      const openAiResults = await callOpenAIBatch(needsOpenAiAnalysis, query);
-      
-      return localAnalysisResults.map((lst: any) => {
-        const cacheKey = `${lst.id}-${lst.price}`;
-        
-        if (openAiResults && openAiResults[lst.id]) {
-          const res = openAiResults[lst.id];
-          const enriched = {
-            isManga: Boolean(res.isManga),
-            type: String(res.type || 'lot') as 'lot' | 'unité' | 'collection',
-            startVolume: Number(res.startVolume || 1),
-            endVolume: Number(res.endVolume || 1),
-            totalVolumes: Number(res.totalVolumes || 1),
-            mangaName: String(res.mangaName || query),
-            confidence: Number(res.confidence || 85),
-            aiVerdict: String(res.aiVerdict || "Analyse OpenAI effectuée."),
-            isExternalAI: true
-          };
-          persistentCache.setOpenAi(cacheKey, enriched);
-          return {
-            ...lst,
-            ai: enriched
-          };
-        }
-
-        // Check if we requested it but it failed -> return fallback
-        if (needsOpenAiAnalysis.some(item => item.id === lst.id)) {
-          const fallback = {
-            ...analyzeListingAI(lst.title, lst.description, lst.price, query),
-            isExternalAI: false
-          };
-          persistentCache.setOpenAi(cacheKey, fallback);
-          return {
-            ...lst,
-            ai: fallback
-          };
-        }
-
-        return lst;
-      });
-    } catch (err) {
-      console.error("[Vinted API] OpenAI batch call error, returning local fallbacks:", err);
-    }
-  }
-
-  return localAnalysisResults;
 }
 
 export async function GET(request: Request) {
@@ -346,16 +186,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ items: [] });
     }
 
-    // Try fetching IP address asynchronously
     fetchServerIp();
 
     const cacheKey = `${query.toLowerCase().trim()}_cat_${catalogIds}`;
     
-    // Check persistent search cache (survives restarts, TTL 30s as requested)
-    const cachedData = persistentCache.getSearch(cacheKey, CACHE_DURATION_MS);
+    // Check persistent search cache (survives restarts, TTL 10s max as requested)
+    const cachedData = persistentCache.getSearch(cacheKey, 10000);
     if (cachedData) {
       cacheHits++;
-      console.log(`[Cache Hit] Serving persistent cached results for query: "${query}"`);
       return NextResponse.json({ 
         items: cachedData, 
         cached: true,
@@ -363,26 +201,20 @@ export async function GET(request: Request) {
         stats: {
           totalVintedRequests,
           total403Errors,
-          total429Errors,
           cacheHits,
-          cacheMisses,
-          openAiCalls,
-          estimatedOpenAiCost: Number(estimatedOpenAiCost.toFixed(5)),
-          cooldownActive: false
+          cacheMisses
         }
       });
     }
 
     cacheMisses++;
     
-    // Queue Vinted request sequentially (Step 2)
+    // Queue Vinted request
     const items = await queueVintedRequest(() => fetchCatalog(query, catalogIds));
     
     // Save to persistent cache
     persistentCache.setSearch(cacheKey, items);
-
-    // Clean expired cache items in background
-    persistentCache.clearExpired(CACHE_DURATION_MS);
+    persistentCache.clearExpired(10000);
 
     return NextResponse.json({ 
       items, 
@@ -391,12 +223,8 @@ export async function GET(request: Request) {
       stats: {
         totalVintedRequests,
         total403Errors,
-        total429Errors,
         cacheHits,
-        cacheMisses,
-        openAiCalls,
-        estimatedOpenAiCost: Number(estimatedOpenAiCost.toFixed(5)),
-        cooldownActive: false
+        cacheMisses
       }
     });
   } catch (error: any) {
@@ -409,12 +237,8 @@ export async function GET(request: Request) {
       stats: {
         totalVintedRequests,
         total403Errors,
-        total429Errors,
         cacheHits,
-        cacheMisses,
-        openAiCalls,
-        estimatedOpenAiCost: Number(estimatedOpenAiCost.toFixed(5)),
-        cooldownActive: false
+        cacheMisses
       }
     }, { status: 200 });
   }
